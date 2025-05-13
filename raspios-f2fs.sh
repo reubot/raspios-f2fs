@@ -106,20 +106,22 @@ mount_image() {
     echo "=== Mounting image ==="
     # mount image to loop device
     echo "Mounting image ${source_image} to loop device"
-    sudo kpartx -av "${working_dir}/${source_image}";
+    kparts="$(sudo kpartx -av ${working_dir}/${source_image})";
+    part_boot=$(grep -oE 'loop[[:digit:]]+p1' <<<"${kparts}")
+    part_root=$(grep -oE 'loop[[:digit:]]+p2' <<<"${kparts}")
 
     # mount image
     echo "Mounting image partitions"
     sudo mkdir -p "${rootfs_dir}";
-    sudo mount /dev/mapper/loop0p2 "${rootfs_dir}";
+    sudo "mount /dev/mapper/${part_root} ${rootfs_dir}";
 }
 
 create_tmpfs() {
     echo "=== Creating tmpfs ==="
-    current_sector=$(sudo kpartx -l "${working_dir}/${source_image}" | awk '/loop0p2/ {print $4}')
+    current_sector=$(sudo kpartx -l "${working_dir}/${source_image}" | awk '/${part_root}/ {print $4}')
     # for example
-    # loop0p1 : 0 1048576 /dev/loop0 8192
-    # loop0p2 : 0 4349952 /dev/loop0 1056768
+    # ${part_boot} : 0 1048576 /dev/loop0 8192
+    # ${part_root} : 0 4349952 /dev/loop0 1056768
     current_size=$(echo "scale=0; ${current_sector} * 512 / (1024 * 1024)" | bc)
     target_sector=$((current_sector * 120 / 100))         # f2fs requires more disk space than ext4
     target_sector=$(((target_sector / 8192 + 1) * 8192))  # Rounded up to the nearest multiple of 8192 (4 MiB)
@@ -146,7 +148,7 @@ copy_rootfs() {
 
 update_bootfs() {
     echo "=== Updating bootfs ==="
-    sudo mount /dev/mapper/loop0p1 "${boot_dir}";
+    sudo mount /dev/mapper/${part_boot} "${boot_dir}";
     sudo cp -a "${boot_dir}/cmdline.txt" "${boot_dir}/cmdline.txt.bak";
     sudo sed -i "s/rootfstype=ext4/rootfstype=f2fs/g" "${boot_dir}/cmdline.txt";
 
@@ -253,11 +255,11 @@ format_rootfs() {
 
     echo "Unmounting boot and root partitions then format root partition"
     sudo umount "${boot_dir}" "${rootfs_dir}";
-    sudo wipefs -a /dev/mapper/loop0p2;  # wipe the partition table
-    echo "Creating f2fs partition in /dev/mapper/loop0p2"
-    sudo mkfs.f2fs -f /dev/mapper/loop0p2;  # format the partition
-    echo "Remounting /dev/mapper/loop0p2 to ${rootfs_dir}"
-    sudo mount /dev/mapper/loop0p2 "${rootfs_dir}";  # remount the partition
+    sudo wipefs -a /dev/mapper/${part_root};  # wipe the partition table
+    echo "Creating f2fs partition in /dev/mapper/${part_root}"
+    sudo mkfs.f2fs -f /dev/mapper/${part_root};  # format the partition
+    echo "Remounting /dev/mapper/${part_root} to ${rootfs_dir}"
+    sudo mount /dev/mapper/${part_root} "${rootfs_dir}";  # remount the partition
 }
 
 copy_back_rootfs() {
